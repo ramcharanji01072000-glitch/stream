@@ -266,12 +266,17 @@ const initializeSocket = (io) => {
           return;
         }
 
-        if (device.streamStatus !== 'idle') {
-          socket.emit('admin:stream_status', {
-            status: 'error',
-            message: 'Device already has an active/pending stream',
-          });
-          return;
+        // If device already has an active stream, close it and start fresh
+        if (device.streamStatus !== 'idle' && device.activeStreamRequestId) {
+          const oldReq = await StreamRequest.findById(device.activeStreamRequestId);
+          if (oldReq && ['pending', 'accepted'].includes(oldReq.status)) {
+            oldReq.status = 'stopped';
+            oldReq.stoppedAt = new Date();
+            await oldReq.save();
+          }
+          device.streamStatus = 'idle';
+          device.activeStreamRequestId = null;
+          await device.save();
         }
 
         // Create stream request
