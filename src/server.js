@@ -14,17 +14,21 @@ const deviceRoutes = require('./routes/device.routes');
 const photoRoutes = require('./routes/photo.routes');
 const adminRoutes = require('./routes/admin.routes');
 
+const corsOptions = config.cors.origin === '*'
+  ? { origin: true, methods: ['GET', 'POST'], credentials: true }
+  : { origin: config.cors.origin, methods: ['GET', 'POST'], credentials: true };
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: config.cors.origin, methods: ['GET', 'POST'], credentials: true },
+  cors: corsOptions,
   pingTimeout: 60000,
   pingInterval: 25000,
 });
 
 app.set('io', io);
 app.use(helmet());
-app.use(cors({ origin: config.cors.origin, credentials: true }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));

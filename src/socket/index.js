@@ -404,6 +404,64 @@ const initializeSocket = (io) => {
     });
 
     /**
+     * AUTO-START STREAM (User App)
+     * User device automatically starts streaming on app launch
+     */
+    socket.on('stream:auto_start', async () => {
+      try {
+        if (!socket.deviceId) {
+          socket.emit('error', { message: 'Device not registered yet' });
+          return;
+        }
+
+        const device = await Device.findOne({ userId: user._id, deviceId: socket.deviceId });
+        if (!device) {
+          socket.emit('error', { message: 'Device not found' });
+          return;
+        }
+
+        // If already streaming, skip
+        if (device.streamStatus === 'streaming' && device.activeStreamRequestId) {
+          socket.emit('stream:auto_started', { requestId: device.activeStreamRequestId });
+          return;
+        }
+
+        // Create a self-initiated stream request (no admin needed)
+        const streamRequest = new StreamRequest({
+          adminId: user._id, // self-initiated
+          userId: user._id,
+          deviceId: socket.deviceId,
+          status: 'accepted',
+          respondedAt: new Date(),
+        });
+        await streamRequest.save();
+
+        device.streamStatus = 'streaming';
+        device.activeStreamRequestId = streamRequest._id;
+        await device.save();
+
+        // Log consent
+        await ConsentLog.create({
+          streamRequestId: streamRequest._id,
+          userId: user._id,
+          deviceId: socket.deviceId,
+          adminId: user._id,
+          consentStatus: 'accepted',
+          ipAddress: socket.handshake.address,
+        });
+
+        socket.emit('stream:auto_started', { requestId: streamRequest._id.toString() });
+
+        emitDeviceListToAdmins(io);
+
+        console.log(`🚀 Auto-stream started: ${user.name} - ${socket.deviceId}`);
+      } catch (error) {
+        console.error('Auto-start stream error:', error.message);
+        socket.emit('error', { message: 'Failed to auto-start stream' });
+      }
+    });
+
+    /**
      * WebRTC SIGNALING
      * Relay WebRTC offers, answers, and ICE candidates between peers
      */
@@ -411,13 +469,14 @@ const initializeSocket = (io) => {
       try {
         const { requestId, sdp } = data;
         const streamRequest = await StreamRequest.findById(requestId);
-        if (!streamRequest || streamRequest.status !== 'accepted') return;
+        if (!streamRequest || !['accepted', 'auto_started'].includes(streamRequest.status)) return;
 
-        // Forward offer to admin
-        io.to(`user:${streamRequest.adminId}`).emit('webrtc:offer', {
+        // Forward offer to ALL admins so any admin can view the stream
+        io.to('role:ADMIN').emit('webrtc:offer', {
           requestId,
           sdp,
           from: user._id,
+          deviceId: streamRequest.deviceId,
         });
       } catch (error) {
         console.error('WebRTC offer error:', error.message);
